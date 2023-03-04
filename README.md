@@ -37,7 +37,7 @@ To list the instances with a common tag, run the following command:
 ```bash
 aws_ec2_manager list-members Group my-group
 
-aws_ec2_manager list-members NoValue
+aws_ec2_manager list-members --json NoValue
 ```
 
 #### Stop instances

@@ -10,7 +10,7 @@ from mypy_boto3_ec2.type_defs import (
 from mypy_boto3_ec2.service_resource import SecurityGroup
 
 from enum import Enum, auto
-from typing import Optional, NewType
+from typing import Optional, NewType, TYPE_CHECKING, cast
 
 
 ec2 = boto3.resource("ec2")
@@ -107,6 +107,7 @@ class Operation:
         self.tags = tags or []
 
     def execute(self, dry_run: bool = True):
+        """Execute the operation."""
         if self.chain == Chain.INGRESS:
             if self.operation == OperationType.REVOKE:
                 self.group.revoke_ingress(IpPermissions=[self.rule], DryRun=dry_run)
@@ -139,3 +140,292 @@ class Operation:
                     else [],
                     DryRun=dry_run,
                 )
+
+
+# CLI
+
+import typer
+
+
+app = typer.Typer()
+
+authorize = typer.Typer()
+app.add_typer(authorize, name="authorize", help="Authorize security group rules.")
+
+revoke = typer.Typer()
+app.add_typer(revoke, name="revoke", help="Revoke security group rules.")
+
+
+def port_range(value: str) -> tuple[int, int]:
+    """Convert a port range string to a tuple of ints."""
+
+    try:
+        if "-" not in value:
+            value = int(value)
+            if not 0 < value < 65535:
+                raise typer.BadParameter("Port must be in the range 0-65535")
+
+            return int(value), int(value)
+
+        from_port, to_port = value.split("-")
+        from_port, to_port = int(from_port), int(to_port)
+        if not 0 < from_port < 65535 or not 0 < to_port < 65535:
+            raise typer.BadParameter("Port must be in the range 0-65535")
+
+        return int(from_port), int(to_port)
+    except ValueError:
+        raise typer.BadParameter(
+            "Port range must be in the form of '80-90' or a single port"
+        )
+
+
+def split_list(value: list[str], sep: str = ",") -> list[list[str]]:
+    """Split a list of strings by a separator."""
+
+    return [s.split(sep) for s in value]
+
+
+@authorize.command("in", help="Authorize ingress security group rules.")
+def au_ingress(
+    group_id: str = typer.Argument(..., help="Security group ID"),
+    port: str = typer.Option(
+        ...,
+        "--port",
+        "-p",
+        help="Single port or port range (e.g. 80-90), represents a tuple (type, code) for ICMP",
+        callback=port_range,
+    ),
+    protocol: str = typer.Option(
+        ...,
+        "--protocol",
+        "-P",
+        help="Protocol (e.g. tcp, udp, icmp or the protocol number), with -1 for all protocols",
+    ),
+    ip_range: Optional[list[str]] = typer.Option(
+        None, "--ip-range", "-4", help="IP ranges (e.g. 192.168.1.0/24, 10.0.0.1/32)"
+    ),
+    ipv6_range: Optional[list[str]] = typer.Option(
+        None, "--ipv6-range", "-6", help="IPv6 ranges (e.g. 2001:db8:1234:1a00::/56)"
+    ),
+    prefix_list_id: Optional[list[str]] = typer.Option(
+        None, "--prefix-list-id", "-L", help="Prefix list IDs (e.g. pl-12345678)"
+    ),
+    user_id_group_pair: Optional[list[str]] = typer.Option(
+        None,
+        "--user-id-group-pair",
+        "-G",
+        help="Source group IDs or tuples (group ID, user ID) (e.g. sg-12345678 or sg-12345678,123456789012)",
+        callback=split_list,
+    ),
+    tag: Optional[list[str]] = typer.Option(
+        None,
+        "--tag",
+        "-T",
+        help="Tag (e.g. --tag key=value)",
+        callback=lambda val: split_list(val, "="),
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", "-d", help="Dry run"),
+):
+    if TYPE_CHECKING:
+        port: tuple[int, int] = cast(tuple, port)
+        user_id_group_pair: list[list[str]] = cast(list, user_id_group_pair)
+        tag: list[list[str]] = cast(list, tag)
+
+    from_port, to_port = port
+
+    op = Operation(
+        OperationType.AUTHORIZE,
+        Chain.INGRESS,
+        group_id,
+        from_port=from_port,
+        to_port=to_port,
+        protocol=protocol,
+        ip_ranges=ip_range,
+        ipv6_ranges=ipv6_range,
+        prefix_list_ids=prefix_list_id,
+        user_id_group_pairs=user_id_group_pair,
+        tags=tag,
+    )
+
+    op.execute(dry_run)
+
+
+@authorize.command("out", help="Authorize egress security group rules.")
+def au_egress(
+    group_id: str = typer.Argument(..., help="Security group ID"),
+    port: str = typer.Option(
+        ...,
+        "--port",
+        "-p",
+        help="Single port or port range (e.g. 80-90), represents a tuple (type, code) for ICMP",
+        callback=port_range,
+    ),
+    protocol: str = typer.Option(
+        ...,
+        "--protocol",
+        "-P",
+        help="Protocol (e.g. tcp, udp, icmp or the protocol number), with -1 for all protocols",
+    ),
+    ip_range: Optional[list[str]] = typer.Option(
+        None, "--ip-range", "-4", help="IP ranges (e.g. 192.168.1.0/24, 10.0.0.1/32)"
+    ),
+    ipv6_range: Optional[list[str]] = typer.Option(
+        None, "--ipv6-range", "-6", help="IPv6 ranges (e.g. 2001:db8:1234:1a00::/56)"
+    ),
+    prefix_list_id: Optional[list[str]] = typer.Option(
+        None, "--prefix-list-id", "-L", help="Prefix list IDs (e.g. pl-12345678)"
+    ),
+    user_id_group_pair: Optional[list[str]] = typer.Option(
+        None,
+        "--user-id-group-pair",
+        "-G",
+        help="Source group IDs or tuples (group ID, user ID) (e.g. sg-12345678 or sg-12345678,123456789012)",
+        callback=split_list,
+    ),
+    tag: Optional[list[str]] = typer.Option(
+        None,
+        "--tag",
+        "-T",
+        help="Tag (e.g. --tag key=value)",
+        callback=lambda val: split_list(val, "="),
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", "-d", help="Dry run"),
+):
+    if TYPE_CHECKING:
+        port: tuple[int, int] = cast(tuple, port)
+        user_id_group_pair: list[list[str]] = cast(list, user_id_group_pair)
+        tag: list[list[str]] = cast(list, tag)
+
+    from_port, to_port = port
+
+    op = Operation(
+        OperationType.AUTHORIZE,
+        Chain.EGRESS,
+        group_id,
+        from_port=from_port,
+        to_port=to_port,
+        protocol=protocol,
+        ip_ranges=ip_range,
+        ipv6_ranges=ipv6_range,
+        prefix_list_ids=prefix_list_id,
+        user_id_group_pairs=user_id_group_pair,
+        tags=tag,
+    )
+
+    op.execute(dry_run)
+
+
+@revoke.command("in", help="Revoke ingress security group rules.")
+def re_ingress(
+    group_id: str = typer.Argument(..., help="Security group ID"),
+    port: str = typer.Option(
+        ...,
+        "--port",
+        "-p",
+        help="Single port or port range (e.g. 80-90), represents a tuple (type, code) for ICMP",
+        callback=port_range,
+    ),
+    protocol: str = typer.Option(
+        ...,
+        "--protocol",
+        "-P",
+        help="Protocol (e.g. tcp, udp, icmp or the protocol number), with -1 for all protocols",
+    ),
+    ip_range: Optional[list[str]] = typer.Option(
+        None, "--ip-range", "-4", help="IP ranges (e.g. 192.168.1.0/24, 10.0.0.1/32)"
+    ),
+    ipv6_range: Optional[list[str]] = typer.Option(
+        None, "--ipv6-range", "-6", help="IPv6 ranges (e.g. 2001:db8:1234:1a00::/56)"
+    ),
+    prefix_list_id: Optional[list[str]] = typer.Option(
+        None, "--prefix-list-id", "-L", help="Prefix list IDs (e.g. pl-12345678)"
+    ),
+    user_id_group_pair: Optional[list[str]] = typer.Option(
+        None,
+        "--user-id-group-pair",
+        "-G",
+        help="Source group IDs or tuples (group ID, user ID) (e.g. sg-12345678 or sg-12345678,123456789012)",
+        callback=split_list,
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", "-d", help="Dry run"),
+):
+    if TYPE_CHECKING:
+        port: tuple[int, int] = cast(tuple, port)
+        user_id_group_pair: list[list[str]] = cast(list, user_id_group_pair)
+
+    from_port, to_port = port
+
+    op = Operation(
+        OperationType.REVOKE,
+        Chain.INGRESS,
+        group_id,
+        from_port=from_port,
+        to_port=to_port,
+        protocol=protocol,
+        ip_ranges=ip_range,
+        ipv6_ranges=ipv6_range,
+        prefix_list_ids=prefix_list_id,
+        user_id_group_pairs=user_id_group_pair,
+    )
+
+    op.execute(dry_run)
+
+
+@revoke.command("out", help="Revoke egress security group rules.")
+def re_egress(
+    group_id: str = typer.Argument(..., help="Security group ID"),
+    port: str = typer.Option(
+        ...,
+        "--port",
+        "-p",
+        help="Single port or port range (e.g. 80-90), represents a tuple (type, code) for ICMP",
+        callback=port_range,
+    ),
+    protocol: str = typer.Option(
+        ...,
+        "--protocol",
+        "-P",
+        help="Protocol (e.g. tcp, udp, icmp or the protocol number), with -1 for all protocols",
+    ),
+    ip_range: Optional[list[str]] = typer.Option(
+        None, "--ip-range", "-4", help="IP ranges (e.g. 192.168.1.0/24, 10.0.0.1/32)"
+    ),
+    ipv6_range: Optional[list[str]] = typer.Option(
+        None, "--ipv6-range", "-6", help="IPv6 ranges (e.g. 2001:db8:1234:1a00::/56)"
+    ),
+    prefix_list_id: Optional[list[str]] = typer.Option(
+        None, "--prefix-list-id", "-L", help="Prefix list IDs (e.g. pl-12345678)"
+    ),
+    user_id_group_pair: Optional[list[str]] = typer.Option(
+        None,
+        "--user-id-group-pair",
+        "-G",
+        help="Source group IDs or tuples (group ID, user ID) (e.g. sg-12345678 or sg-12345678,123456789012)",
+        callback=split_list,
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", "-d", help="Dry run"),
+):
+    if TYPE_CHECKING:
+        port: tuple[int, int] = cast(tuple, port)
+        user_id_group_pair: list[list[str]] = cast(list, user_id_group_pair)
+
+    from_port, to_port = port
+
+    op = Operation(
+        OperationType.REVOKE,
+        Chain.EGRESS,
+        group_id,
+        from_port=from_port,
+        to_port=to_port,
+        protocol=protocol,
+        ip_ranges=ip_range,
+        ipv6_ranges=ipv6_range,
+        prefix_list_ids=prefix_list_id,
+        user_id_group_pairs=user_id_group_pair,
+    )
+
+    op.execute(dry_run)
+
+
+if __name__ == "__main__":
+    app()

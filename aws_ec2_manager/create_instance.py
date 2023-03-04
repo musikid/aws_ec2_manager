@@ -32,3 +32,36 @@ def create_instance(
         MinCount=1,
         MaxCount=1,
     )[0]
+
+
+# CLI
+
+import typer
+
+app = typer.Typer()
+
+
+@app.callback(invoke_without_command=True, help="Create an EC2 instance.")
+def main(
+    name: str = typer.Option(..., help="Instance name"),
+    key: str = typer.Option(..., help="Key name"),
+    image_id: str = typer.Option(..., help="AMI ID"),
+    subnet_id: str = typer.Option(None, help="Subnet ID"),
+    security_group: list[str] = typer.Option([], help="Security Group IDs"),
+    instance_type: str = typer.Option("t2.nano", "--type", help="Instance type"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Dry run"),
+):
+    instance = create_instance(
+        name,
+        key,
+        security_group_ids=security_group,
+        subnet_id=subnet_id,
+        dry_run=dry_run,
+        image_id=image_id,
+        instance_type=instance_type,
+    )
+    typer.echo(f"Created instance {name} as {instance.id}", err=True)
+
+
+if __name__ == "__main__":
+    app()
